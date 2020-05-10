@@ -1,19 +1,19 @@
-- [Preconditions](#org52e1de8)
-- [Sample usage](#org80584d8)
+- [Preconditions](#org57051b7)
+- [Sample usage](#org47d158c)
 
-This script uses `docker-machine` to provision a cluster in VirtualBox, starts docker swarm in the cluster, and installs Portainer (<http://portainer.io>).
+This script uses `docker-machine` to provision a local virtual cluster in VirtualBox, starts docker swarm in the cluster, and installs the stack Portainer (<http://portainer.io>).
 
 Besides, it creates a set of scripts to manage the created swarm cluster.
 
 
-<a id="org52e1de8"></a>
+<a id="org57051b7"></a>
 
 # Preconditions
 
 Linux host, docker, docker-machine and docker-machine-ipconfig (<https://github.com/fivestars/docker-machine-ipconfig>) to assign static IP addresses to the virtual machines.
 
 
-<a id="org80584d8"></a>
+<a id="org47d158c"></a>
 
 # Sample usage
 
