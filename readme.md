@@ -1,3 +1,6 @@
+# Create and manage virtual swarm cluster in VirtualBox
+[Juan Gutiérrez-Aguado](https://www.uv.es/jgutierr)
+
 - [Preconditions](#org57051b7)
 - [Sample usage](#org47d158c)
 
