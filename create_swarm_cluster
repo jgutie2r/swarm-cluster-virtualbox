@@ -1,0 +1,294 @@
+#!/bin/bash
+
+function create_manager(){
+   cluster=$1
+   net=$2
+
+   # Name of the virtual machine
+   name="${cluster}-manager1"
+
+   # Create the first node to initialize the swarm cluster 
+   docker-machine create --driver virtualbox --virtualbox-memory $MANAGER_MEMORY --virtualbox-hostonly-cidr $net $name
+
+   # Generate an IP address
+   addr=$(echo "$net" | awk -F'.' '{print $1"."$2"."$3".141"}')
+   
+   # Assign the IP address to the node
+   docker-machine-ipconfig static $name $addr
+
+   # Init swarm using the generated IP address to join other nodes
+   docker-machine ssh $name docker swarm init --advertise-addr $addr
+}
+
+function add_manager(){
+   cluster=$1
+   net=$2
+   ip=$3
+
+   # Search las manager and add 1
+   last=$(docker-machine ls | egrep -o "${cluster}-manager[0-9]" | egrep -o "[0-9]" | sort -n | tail -n 1)
+   let next=$last+1
+
+   # Name of the virtual machine
+   name="${cluster}-manager$next"
+
+   docker-machine create --driver virtualbox  --virtualbox-memory $MANAGER_MEMORY  --virtualbox-hostonly-cidr $net $name
+
+   # Generate an IP address for the node
+   addr=$(echo "$net" | awk -F'.' '{print $1"."$2"."$3".15"}')
+   let n=140+$next
+   
+   # Assign the IP address to the node (static address)
+   docker-machine-ipconfig static $name $addr$n
+
+   # Obtain the token to add managers
+   token_manager=$(docker-machine ssh "$cluster"-manager1 docker swarm join-token --quiet manager)
+
+   # Join the cluster as manager
+   docker-machine ssh $name docker swarm join --token $token_manager $ip:2377
+}
+
+function add_worker(){
+   cluster=$1
+   net=$2
+   ip=$3
+   label=$4
+   
+   # Search last worker and add 1
+   last=$(docker-machine ls | egrep -o "${cluster}-worker[0-9]" | egrep -o "[0-9]" | sort -n | tail -n 1)
+   let next=$last+1
+
+   # Name of the virtual machine
+   name="${cluster}-worker$next"
+
+   docker-machine create --driver virtualbox  --virtualbox-memory $WORKER_MEMORY  --virtualbox-hostonly-cidr $net $name
+
+   # Generate an IP address for the node
+   addr=$(echo "$net" | awk -F'.' '{print $1"."$2"."$3"."}')
+   let n=160+$next
+   
+   # Assign the IP to node (static IP)
+   docker-machine-ipconfig static $name $addr$n
+
+   # Obtain token to add worker
+   token_worker=$(docker-machine ssh "$cluster"-manager1 docker swarm join-token --quiet worker)
+
+   # Join the cluster as worker
+   docker-machine ssh $name docker swarm join --token $token_worker $ip:2377
+
+   # Label the node (if there is a label)
+   if [ -n "$label" ]; then
+       docker-machine ssh "$cluster"-manager1 docker node update --label-add "$label" $name
+   fi   
+}
+
+
+function delete_worker(){
+    cluster=$1
+    
+   # Search the last worker number
+   last=$(docker-machine ls | egrep -o "${cluster}-worker[0-9]" | egrep -o "[0-9]" | sort -n | tail -n 1)
+  
+   name="${cluster}-worker$last"
+
+   # Leave docker swarm
+   docker-machine ssh docker swarm leave
+   
+   # Delete
+   docker-machine rm $name
+}
+
+
+function install_portainer(){
+   cluster=$1
+
+   CLSDIR="${CLUSTER_SCRIPTS_DIR}/${cluster}"
+   
+   # Install portainer stack in manager1 
+   curl -L https://downloads.portainer.io/portainer-agent-stack.yml -o "${CLSDIR}"/portainer-agent-stack.yml
+
+   eval $(docker-machine env "$cluster"-manager1) 
+   docker stack deploy --compose-file="${CLSDIR}"/portainer-agent-stack.yml portainer
+}
+
+# In this version I am not calling this function but can be used to attach a second
+# disk to the VMs and mount it to a given directory in the VM
+function attach_disk(){
+    # To add a second disk to a VM that is running
+    vm=$1
+    path=$2
+    
+    STORAGE_CONTROLLER_NAME="SATA"
+    HDD_SIZE=1024
+
+    # Path and name of the disk
+    disk_name=/home/juan/.docker/machine/machines/$vm/$vm/data_disk
+
+    # Create disk
+    VBoxManage createhd --filename $disk_name --size $HDD_SIZE --format VMDK
+
+    # Add disk to VM
+    VBoxManage storageattach "$vm" --storagectl "$STORAGE_CONTROLLER_NAME" --type hdd --port 5 --medium ${disk_name}.vmdk
+
+    # Wait 
+    sleep 5
+
+    # Get last disk and mount it in path
+    disk=$(docker-machine ssh $vm lsblk | grep disk | egrep -o sd[a-z] | sort | tail -n1)
+    docker-machine ssh $vm sudo mkdir $path 
+    docker-machine ssh $vm sudo mkfs.ext4 /dev/${disk}
+    sleep 1
+    docker-machine ssh $vm sudo mount /dev/${disk} $path    
+}
+
+# Cluster name
+cluster=$1
+
+# Number of managers
+managers=$2
+
+# Number of workers
+workers=$3
+
+# Host only network to connect VMs in VirtualBox
+net=$4
+
+# SAFETY CHECK
+if [ -z "$MANAGER_MEMORY" ]; then
+   MANAGER_MEMORY=1024
+fi
+
+if [ -z "$WORKER_MEMORY" ]; then
+   WORKER_MEMORY=1024
+fi
+
+if [ -z "CLUSTER_SCRIPTS_DIR" ]; then
+    CLUSTER_SCRIPTS_DIR="~/.docker/swarm"
+fi
+
+# Check if there is a cluster with this name already
+CLSDIR="${CLUSTER_SCRIPTS_DIR}/${cluster}"
+
+if [ -d "$CLSDIR" ]; then
+    # Finish with error
+    echo "ERROR: There is a cluster with that name registered in this machine"
+    exit 1
+fi
+
+mkdir -p "$CLSDIR"
+
+# Create first manager
+create_manager $cluster $net
+
+# Create the rest of managers
+ip=$(docker-machine ip ${cluster}-manager1)
+if [ "$managers" -gt 1 ]; then
+   for i in $(seq 2 $managers); do
+      add_manager $cluster $net $ip
+   done
+fi
+
+if [ "$workers" -gt 0 ]; then
+   # Create workers
+   for i in $(seq 1 $workers); do
+      add_worker $cluster $net $ip
+   done
+fi
+
+# Install portainer in cluster
+install_portainer $cluster
+
+
+# Generate scripts to manage the swarm cluster
+#  - stop the cluster
+#  - start the cluster
+#  - add a worker
+#  - remove a worker
+#  - check status of cluster
+#  - open portainer in browser
+#  - delete the cluster
+
+
+cat > ${CLSDIR}/stop_cluster.sh << HERE
+cluster=$cluster
+
+for i in \$(docker-machine ls | egrep -o "${cluster}-worker[0-9]" | egrep -o "[0-9]"); do
+   docker-machine stop ${cluster}-worker\$i
+done
+
+for i in \$(docker-machine ls | egrep -o "${cluster}-manager[0-9]" | egrep -o "[0-9]"); do
+   docker-machine stop ${cluster}-manager\$i
+done
+
+HERE
+
+cat > ${CLSDIR}/start_cluster.sh << HERE
+cluster=$cluster
+
+for i in \$(docker-machine ls | egrep -o "${cluster}-manager[0-9]" | egrep -o "[0-9]"); do
+   docker-machine start ${cluster}-manager\$i
+done
+
+for i in \$(docker-machine ls | egrep -o "${cluster}-worker[0-9]" | egrep -o "[0-9]"); do
+   docker-machine start ${cluster}-worker\$i
+done
+
+sleep 5
+xdg-open http://\$(docker-machine ip ${cluster}-manager1):9000
+HERE
+
+cat > ${CLSDIR}/add_worker.sh << HERE
+source ~/bin/swarm/swarm_functions.sh
+
+ip=\$(docker-machine ip $cluster-manager1)
+
+add_worker $cluster $net \$ip
+HERE
+
+
+cat > ${CLSDIR}/rm_worker.sh << HERE
+source ~/bin/swarm/swarm_functions.sh
+
+delete_worker $cluster
+HERE
+
+cat > ${CLSDIR}/rm_cluster.sh << HERE
+cluster=$cluster
+
+for i in \$(docker-machine ls | egrep -o "${cluster}-worker[0-9]" | egrep -o "[0-9]"); do
+   docker-machine rm ${cluster}-worker\$i
+done
+
+for i in \$(docker-machine ls | egrep -o "${cluster}-manager[0-9]" | egrep -o "[0-9]"); do
+   docker-machine rm ${cluster}-manager\$i
+done
+
+rm -rf ~/bin/swarm/${cluster}
+HERE
+
+
+
+cat > ${CLSDIR}/status_cluster.sh << HERE
+docker-machine ls  | grep $cluster
+
+running=\$(docker-machine ls  | grep $cluster-manager1 | grep Running)
+
+if [ -n "\$running" ]; then 
+   docker-machine ssh $cluster-manager1 docker node ls
+fi
+HERE
+
+
+cat > ${CLSDIR}/open_portainer.sh << HERE
+xdg-open http://\$(docker-machine ip ${cluster-manager1}):9000
+HERE
+
+chmod u+x ${CLSDIR}/*.sh
+
+echo "Cluster ${cluster} has been created"
+echo "Scripts to manage the cluster are in ${CLSDIR$}"
+ls ${CLSDIR}
+
+sleep 5
+echo "Openning Portainer in browser"
+xdg-open http://$ip:9000

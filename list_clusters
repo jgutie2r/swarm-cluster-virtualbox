@@ -1,0 +1,7 @@
+#!/bin/bash
+# Directory to store generated cluster scripts
+if [ -z "$CLUSTER_SCRIPTS_DIR" ]; then
+    CLUSTER_SCRIPTS_DIR=~/.docker/swarm
+fi
+
+ls -d ${CLUSTER_SCRIPTS_DIR}/*/ | awk -F'/' '{print $(NF-1)}'
