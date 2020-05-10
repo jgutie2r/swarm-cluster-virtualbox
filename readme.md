@@ -1,4 +1,4 @@
-# Create and manage virtual swarm cluster in VirtualBox
+# Create and manage virtual swarm clusters in VirtualBox
 [Juan Gutiérrez-Aguado](https://www.uv.es/jgutierr)
 
 - [Preconditions](#org57051b7)
@@ -11,14 +11,14 @@ Besides, it creates a set of scripts to manage the created swarm cluster.
 
 <a id="org57051b7"></a>
 
-# Preconditions
+## Preconditions
 
 Linux host, docker, docker-machine and docker-machine-ipconfig (<https://github.com/fivestars/docker-machine-ipconfig>) to assign static IP addresses to the virtual machines.
 
 
 <a id="org47d158c"></a>
 
-# Sample usage
+## Sample usage
 
 ```bash
 # Cluster name
