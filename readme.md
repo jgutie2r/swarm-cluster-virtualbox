@@ -1,4 +1,4 @@
-# Create and manage virtual dockder swarm clusters in VirtualBox
+# Create and manage virtual docker swarm clusters in VirtualBox
 [Juan Gutiérrez-Aguado](https://www.uv.es/jgutierr)
 
 - [Preconditions](#org57051b7)
